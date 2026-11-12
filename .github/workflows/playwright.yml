@@ -17,10 +17,33 @@ jobs:
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps chromium
+    # Reuse a saved UtilStop login so tests don't request an OTP (rate-limited per number):
+    # newest cached session first, else the UTILSTOP_AUTH_STATE secret.
+    - name: Restore saved login session
+      uses: actions/cache/restore@v4
+      with:
+        path: playwright/.auth
+        key: utilstop-auth-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: utilstop-auth-
+    - name: Seed login session from secret if none cached
+      env:
+        AUTH_STATE: ${{ secrets.UTILSTOP_AUTH_STATE }}
+      run: |
+        f=playwright/.auth/uae-user.dev.utilstop.com.json
+        if [ ! -f "$f" ] && [ -n "$AUTH_STATE" ]; then
+          mkdir -p playwright/.auth && printf '%s' "$AUTH_STATE" > "$f" && echo "Seeded login session from secret"
+        fi
+        if [ -f "$f" ]; then echo "Login session available"; else echo "No saved session: tests will request an OTP"; fi
     # Chromium only, no retries: every UtilStop test logs in with the same phone number,
     # and the site rate-limits OTP requests per number (shared with the 2-hourly workflow).
     - name: Run Playwright tests
       run: npx playwright test --project=chromium --retries=0
+    - name: Save login session for the next run
+      if: ${{ !cancelled() && hashFiles('playwright/.auth/*.json') != '' }}
+      uses: actions/cache/save@v4
+      with:
+        path: playwright/.auth
+        key: utilstop-auth-${{ github.run_id }}-${{ github.run_attempt }}
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:

@@ -29,15 +29,25 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      # Reuse the last run's login session so we only request an OTP when it has expired
-      # (the site rate-limits OTP requests per phone number). A new cache entry is saved
-      # after each successful run; restore-keys picks the most recent one.
+      # Reuse a saved login so we only request an OTP when it has expired (the site
+      # rate-limits OTP requests per phone number): newest cached session first (shared
+      # with playwright.yml), else the UTILSTOP_AUTH_STATE secret.
       - name: Restore saved login session
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: playwright/.auth
-          key: utilstop-auth-${{ github.run_id }}
+          key: utilstop-auth-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: utilstop-auth-
+
+      - name: Seed login session from secret if none cached
+        env:
+          AUTH_STATE: ${{ secrets.UTILSTOP_AUTH_STATE }}
+        run: |
+          f=playwright/.auth/uae-user.dev.utilstop.com.json
+          if [ ! -f "$f" ] && [ -n "$AUTH_STATE" ]; then
+            mkdir -p playwright/.auth && printf '%s' "$AUTH_STATE" > "$f" && echo "Seeded login session from secret"
+          fi
+          if [ -f "$f" ]; then echo "Login session available"; else echo "No saved session: test will request an OTP"; fi
 
       - name: Book Pest Control, then cancel it
         id: test
@@ -46,6 +56,14 @@ jobs:
           PLAYWRIGHT_HTML_OPEN: never
         # One retry for a flaky dev server; the retry reuses the session saved by the first attempt.
         run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --reporter=line,html --retries=1
+
+      # Saved even when the test fails, so a successful OTP login is never thrown away.
+      - name: Save login session for the next run
+        if: ${{ !cancelled() && hashFiles('playwright/.auth/*.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: playwright/.auth
+          key: utilstop-auth-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Email the report
         if: ${{ !cancelled() }}
