@@ -1,29 +1,46 @@
 const nodemailer = require('nodemailer');
 const fs = require('fs');
-const archiverModule = require('archiver');
-const archiver = archiverModule.default || archiverModule;
+// archiver v8 exports archive classes instead of the old archiver('zip') factory.
+const { ZipArchive } = require('archiver');
 
 // TEST_STATUS is the test step outcome from the workflow: success | failure.
 const status = { success: 'PASSED', failure: 'FAILED' }[process.env.TEST_STATUS] ?? process.env.TEST_STATUS;
 
-async function sendReport() {
-    const output = fs.createWriteStream('report.zip');
-    const archive = archiver('zip');
+const REQUIRED_ENV = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'REPORT_TO'];
 
-    archive.pipe(output);
-    archive.directory('playwright-report/', false);
-    await archive.finalize();
+async function zipReport(sourceDir, zipPath) {
+    const output = fs.createWriteStream(zipPath);
+    const archive = new ZipArchive({ zlib: { level: 9 } });
 
-    await new Promise((resolve, reject) => {
+    // Listen before finalize() so the 'close' event cannot be missed.
+    const done = new Promise((resolve, reject) => {
         output.on('close', resolve);
         output.on('error', reject);
         archive.on('error', reject);
     });
 
+    archive.pipe(output);
+    archive.directory(sourceDir, false);
+    await archive.finalize();
+    await done;
+}
+
+async function sendReport() {
+    const missing = REQUIRED_ENV.filter((name) => !process.env[name]);
+    if (missing.length) {
+        throw new Error(`Missing email settings: ${missing.join(', ')} (add them as GitHub Actions secrets)`);
+    }
+    if (!fs.existsSync('playwright-report')) {
+        throw new Error('playwright-report/ not found — run the tests with the html reporter first');
+    }
+
+    await zipReport('playwright-report/', 'report.zip');
+
+    const port = Number(process.env.SMTP_PORT);
     const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT),
-        secure: true,
+        port,
+        secure: port === 465, // 465 = implicit TLS; 587/25 upgrade via STARTTLS
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASSWORD
@@ -49,6 +66,6 @@ async function sendReport() {
 }
 
 sendReport().catch(error => {
-    console.error('Email failed:', error);
+    console.error('Email failed:', error.message ?? error);
     process.exitCode = 1;
 });

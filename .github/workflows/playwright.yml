@@ -16,9 +16,11 @@ jobs:
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
-      run: npx playwright install --with-deps
+      run: npx playwright install --with-deps chromium
+    # Chromium only, no retries: every UtilStop test logs in with the same phone number,
+    # and the site rate-limits OTP requests per number (shared with the 2-hourly workflow).
     - name: Run Playwright tests
-      run: npx playwright test
+      run: npx playwright test --project=chromium --retries=0
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:

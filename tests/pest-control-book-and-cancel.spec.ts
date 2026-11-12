@@ -57,6 +57,34 @@ test.afterEach(async ({}, testInfo) => {
   }
 });
 
+// Longest Retry-After we are willing to wait out when /api/generateOTP is rate-limited.
+const maxOtpWaitSeconds = Number(process.env.TEST_MAX_OTP_WAIT ?? 600);
+
+// Clicks "Send OTP". The server rate-limits OTP requests per phone number (HTTP 429 with
+// Retry-After); wait it out once if it is short, otherwise fail with a clear message.
+async function requestOtp(page: Page) {
+  for (let attempt = 1; ; attempt++) {
+    const responsePromise = page.waitForResponse((r) => r.url().includes('/api/generateOTP'));
+    await page.getByRole('button', { name: 'Send OTP' }).click();
+    const response = await responsePromise;
+    if (response.status() !== 429) {
+      expect(response.ok(), `/api/generateOTP failed with HTTP ${response.status()}`).toBe(true);
+      return;
+    }
+
+    const retryAfter = Number(response.headers()['retry-after'] ?? 0);
+    if (attempt > 1 || !retryAfter || retryAfter > maxOtpWaitSeconds) {
+      throw new Error(
+        `OTP rate limit (HTTP 429) for ${phone}: server says retry after ${retryAfter || '?'}s. ` +
+        'Too many logins with this number recently (other CI runs / workflows?) — try again later.',
+      );
+    }
+    console.log(`OTP rate-limited; waiting ${retryAfter}s before asking again`);
+    test.setTimeout(test.info().timeout + (retryAfter + 60) * 1000);
+    await page.waitForTimeout((retryAfter + 5) * 1000);
+  }
+}
+
 async function loginIfNeeded(page: Page) {
   const logout = page.getByRole('button', { name: 'Logout' });
   if (await logout.waitFor({ timeout: 15_000 }).then(() => true, () => false)) return;
@@ -69,8 +97,7 @@ async function loginIfNeeded(page: Page) {
   }
 
   await page.getByRole('textbox', { name: 'Enter Phone number' }).fill(phone);
-  await page.getByRole('button', { name: 'Send OTP' }).click();
-  await expect(page.getByText('Too many OTP requests'), 'OTP rate limit hit; wait and retry').toBeHidden();
+  await requestOtp(page);
 
   const otpInputs = page.locator('input[maxlength="1"]');
   await expect(otpInputs).toHaveCount(otp.length);
