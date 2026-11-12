@@ -19,8 +19,10 @@ const expect = baseExpect.configure({ timeout: 30_000 });
 const authFile = path.join(__dirname, '..', 'playwright', '.auth', 'uae-user.dev.utilstop.com.json');
 test.use({
   storageState: fs.existsSync(authFile) ? authFile : undefined,
-  // Headed (visible browser) by default; set HEADLESS=1 to run without a window.
-  headless: process.env.HEADLESS === '1',
+  // Headed (visible browser) locally; headless on CI (no display) or when HEADLESS=1.
+  headless: process.env.HEADLESS === '1' || !!process.env.CI,
+  // UAE customer: keep dates/time slots in Dubai time even on a UTC CI runner.
+  timezoneId: 'Asia/Dubai',
 });
 
 const phone = process.env.TEST_PHONE ?? '551234567';

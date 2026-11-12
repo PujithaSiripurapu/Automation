@@ -1,0 +1,55 @@
+name: Pest Control book & cancel (every 2 hours)
+
+on:
+  schedule:
+    # Every 2 hours, on the hour (UTC). GitHub may start scheduled runs a few minutes late.
+    - cron: '0 */2 * * *'
+  workflow_dispatch: # "Run workflow" button for manual runs
+
+concurrency:
+  group: pest-book-cancel
+  cancel-in-progress: false
+
+jobs:
+  book-and-cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Book Pest Control, then cancel it
+        id: test
+        env:
+          HEADLESS: '1'
+          PLAYWRIGHT_HTML_OPEN: never
+        run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --reporter=line,html
+
+      - name: Email the report
+        if: ${{ !cancelled() }}
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+          TEST_STATUS: ${{ steps.test.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node send-report.js
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: pest-book-cancel-report
+          path: playwright-report/
+          retention-days: 14
