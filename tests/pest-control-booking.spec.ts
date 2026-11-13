@@ -111,13 +111,18 @@ test('UAE customer books Pest Control with cash + coupon, then pays by card', as
     await expect(page.getByRole('heading', { name: 'Pest Control', level: 1 })).toBeVisible();
 
     const addressDialog = page.getByRole('heading', { name: 'Saved Addresses' }).locator('xpath=../..');
-    // The first click can land before the page is interactive; retry until the dialog opens.
+    // If the click lands before saved addresses have loaded, the app opens the empty
+    // "Add Address" form instead; close it and try again until the saved list shows.
+    const addAddressForm = page.getByRole('button', { name: '← Add Address' });
     await expect(async () => {
-      if (!(await addressDialog.isVisible())) {
-        await page.getByRole('button', { name: /Select your service location/ }).click();
+      if (await addressDialog.isVisible()) return;
+      if (await addAddressForm.isVisible()) {
+        await page.getByRole('button', { name: 'Close', exact: true }).click();
+        await expect(addAddressForm).toBeHidden();
       }
-      await expect(addressDialog).toBeVisible({ timeout: 3_000 });
-    }).toPass({ timeout: 30_000 });
+      await page.getByRole('button', { name: /Select your service location/ }).click({ timeout: 5_000 });
+      await expect(addressDialog).toBeVisible({ timeout: 5_000 });
+    }, 'Saved Addresses dialog did not open').toPass({ intervals: [2_000], timeout: 60_000 });
     await expect(addressDialog.getByText('Dubai').first(), 'Account needs at least one saved address').toBeVisible({ timeout: 15_000 });
     await addressDialog.getByText('Dubai').first().click();
     await expect(page.getByRole('heading', { name: 'Saved Addresses' })).toBeHidden();
