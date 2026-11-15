@@ -5,7 +5,7 @@ import { addPestPhoto, openLoggedIn, pickDateDaysAhead, test } from './support/u
  * End-to-end: UAE customer logs in (phone + OTP), books Pest Control for a future date,
  * then opens My Bookings and cancels that same booking.
  *
- * Runs on GitHub Actions: on every push (playwright.yml) and every 2 hours (pest-book-cancel.yml).
+ * Runs on GitHub Actions (playwright.yml): every 2 hours, on every push, and on "Run workflow".
  *
  * Env overrides: TEST_PHONE, TEST_OTP, TEST_PEST_TYPE, TEST_DAYS_AHEAD.
  */

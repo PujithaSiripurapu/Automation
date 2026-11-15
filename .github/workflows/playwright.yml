@@ -1,32 +1,42 @@
 name: Playwright Tests
+
+# Books Pest Control on dev.utilstop.com, cancels it, and emails the report.
 on:
+  schedule:
+    # Every 2 hours, on the hour (UTC). GitHub may start scheduled runs a few minutes late.
+    - cron: '0 */2 * * *'
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:
+  workflow_dispatch: # "Run workflow" button for manual runs
 
-# Both workflows log in to the same UtilStop test account, and the site rate-limits OTP
-# requests per phone number: never run them at the same time (shared group, queued).
+# Every run logs in to the same UtilStop test account, and the site rate-limits OTP
+# requests per phone number: never run two at the same time (queued, not cancelled).
 concurrency:
   group: utilstop-test-account
   cancel-in-progress: false
 
 jobs:
   test:
-    timeout-minutes: 60
     runs-on: ubuntu-latest
+    # Room to wait out an OTP rate limit (up to 10 min) on top of the ~1 min test.
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
+
     - uses: actions/setup-node@v4
       with:
         node-version: lts/*
         cache: npm
+
     - name: Install dependencies
       run: npm ci
-    - name: Install Playwright Browsers
+
+    - name: Install Chromium
       run: npx playwright install --with-deps chromium
-    # Reuse a saved UtilStop login so tests don't request an OTP (rate-limited per number):
+
+    # Reuse a saved UtilStop login so we only request an OTP when it has expired:
     # newest cached session first, else the UTILSTOP_AUTH_STATE secret.
     - name: Restore saved login session
       uses: actions/cache/restore@v4
@@ -34,6 +44,7 @@ jobs:
         path: playwright/.auth
         key: utilstop-auth-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: utilstop-auth-
+
     - name: Seed login session from secret if none cached
       env:
         AUTH_STATE: ${{ secrets.UTILSTOP_AUTH_STATE }}
@@ -42,21 +53,37 @@ jobs:
         if [ ! -f "$f" ] && [ -n "$AUTH_STATE" ]; then
           mkdir -p playwright/.auth && printf '%s' "$AUTH_STATE" > "$f" && echo "Seeded login session from secret"
         fi
-        if [ -f "$f" ]; then echo "Login session available"; else echo "No saved session: tests will request an OTP"; fi
-    # Chromium only, no retries: every UtilStop test logs in with the same phone number,
-    # and the site rate-limits OTP requests per number (shared with the 2-hourly workflow).
-    - name: Run Playwright tests
+        if [ -f "$f" ]; then echo "Login session available"; else echo "No saved session: test will request an OTP"; fi
+
+    # The booking test cancels its own booking, so it leaves nothing behind on the dev account.
+    - name: Book Pest Control, then cancel it
+      id: test
       env:
         HEADLESS: '1'
         PLAYWRIGHT_HTML_OPEN: never
-      # The booking test cancels its own booking, so it leaves nothing behind on the dev account.
-      run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=0 --reporter=line,html
+      # One retry for a flaky dev server; the retry reuses the session saved by the first attempt.
+      run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=1 --reporter=line,html
+
+    # Saved even when the test fails, so a successful OTP login is never thrown away.
     - name: Save login session for the next run
       if: ${{ !cancelled() && hashFiles('playwright/.auth/*.json') != '' }}
       uses: actions/cache/save@v4
       with:
         path: playwright/.auth
         key: utilstop-auth-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: Email the report
+      if: ${{ !cancelled() }}
+      env:
+        SMTP_HOST: ${{ secrets.SMTP_HOST }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        SMTP_USER: ${{ secrets.SMTP_USER }}
+        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        REPORT_TO: ${{ secrets.REPORT_TO }}
+        TEST_STATUS: ${{ steps.test.outcome }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: node send-report.js
+
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:
