@@ -6,8 +6,10 @@ on:
     - cron: '0 */2 * * *'
   workflow_dispatch: # "Run workflow" button for manual runs
 
+# Shared with playwright.yml: both log in to the same UtilStop test account, and the site
+# rate-limits OTP requests per phone number, so they must never run at the same time.
 concurrency:
-  group: pest-book-cancel
+  group: utilstop-test-account
   cancel-in-progress: false
 
 jobs:

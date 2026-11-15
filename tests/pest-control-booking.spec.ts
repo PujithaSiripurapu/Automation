@@ -1,17 +1,9 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { test, expect as baseExpect, type Page } from '@playwright/test';
+import { expect as baseExpect, type Page } from '@playwright/test';
+import { addPestPhoto, openLoggedIn, pickDateDaysAhead, test } from './support/utilstop';
 
 // dev.utilstop.com is a Vite dev server; lazy pages can take well over 5s to render.
 const expect = baseExpect.configure({ timeout: 20_000 });
 
-// Saved login session — the site rate-limits OTP requests per number, so only log in
-// with OTP when this session is missing or expired.
-const authFile = path.join(__dirname, '..', 'playwright', '.auth', 'uae-user.dev.utilstop.com.json');
-test.use({ storageState: fs.existsSync(authFile) ? authFile : undefined });
-
-const phone = process.env.TEST_PHONE ?? '551234567';
-const otp = process.env.TEST_OTP ?? '123456';
 // Leave unset to apply the first coupon the payment page suggests.
 const couponCode = process.env.TEST_COUPON;
 const pestType = process.env.TEST_PEST_TYPE ?? 'Cockroaches';
@@ -23,33 +15,6 @@ const card = {
   cvc: process.env.TEST_CARD_CVC ?? '123',
   country: process.env.TEST_CARD_COUNTRY ?? 'United Arab Emirates',
 };
-
-async function login(page: Page) {
-  await page.goto('/account', { waitUntil: 'domcontentloaded' });
-  const logout = page.getByRole('button', { name: 'Logout' });
-  if (await logout.waitFor({ timeout: 10_000 }).then(() => true, () => false)) return;
-
-  await page.goto('/login', { waitUntil: 'domcontentloaded' });
-  const countryPicker = page.getByRole('heading', { name: 'Select your country' });
-  if (await countryPicker.isVisible()) {
-    await page.getByRole('button', { name: /United Arab Emirates.*\+971/ }).click();
-    await expect(countryPicker).toBeHidden();
-  }
-
-  await page.getByRole('textbox', { name: 'Enter Phone number' }).fill(phone);
-  await page.getByRole('button', { name: 'Send OTP' }).click();
-  await expect(page.getByText('Too many OTP requests'), 'OTP rate limit hit; wait and retry').toBeHidden();
-
-  const otpInputs = page.locator('input[maxlength="1"]');
-  await expect(otpInputs).toHaveCount(otp.length);
-  for (const [index, digit] of [...otp].entries()) {
-    await otpInputs.nth(index).fill(digit);
-  }
-
-  await page.getByRole('button', { name: 'Verify OTP' }).click();
-  await expect(logout).toBeVisible();
-  await page.context().storageState({ path: authFile });
-}
 
 function bookingCard(page: Page, displayBookingId: string) {
   return page.getByRole('link', { name: new RegExp(`Booking ID: .*${displayBookingId}\\b`) });
@@ -100,14 +65,11 @@ async function completeCardPayment(page: Page, displayBookingId: string) {
 
 test('UAE customer books Pest Control with cash + coupon, then pays by card', async ({ page }) => {
   test.setTimeout(240_000);
-  expect(otp, 'Set TEST_OTP to the temporary test OTP').toMatch(/^\d{6}$/);
-
   await test.step('Login with UAE phone number and OTP', async () => {
-    await login(page);
+    await openLoggedIn(page, '/services/pest-control/book');
   });
 
   await test.step('Location: saved address, date and time slot', async () => {
-    await page.goto('/services/pest-control/book', { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Pest Control', level: 1 })).toBeVisible();
 
     const addressDialog = page.getByRole('heading', { name: 'Saved Addresses' }).locator('xpath=../..');
@@ -127,16 +89,7 @@ test('UAE customer books Pest Control with cash + coupon, then pays by card', as
     await addressDialog.getByText('Dubai').first().click();
     await expect(page.getByRole('heading', { name: 'Saved Addresses' })).toBeHidden();
 
-    // Future date: today + daysAhead, via the calendar popup
-    const target = new Date();
-    target.setDate(target.getDate() + daysAhead);
-    await page.getByRole('button', { name: /^\d{2} \w{3} \d{4}$/ }).click();
-    if (target.getMonth() !== new Date().getMonth()) {
-      await page.getByRole('button', { name: 'Next month' }).click();
-    }
-    await page.getByRole('button', { name: String(target.getDate()), exact: true }).click();
-    const expectedLabel = target.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    await expect(page.getByRole('button', { name: expectedLabel })).toBeVisible();
+    await pickDateDaysAhead(page, daysAhead);
 
     await page.getByRole('button', { name: /^\d{1,2}:\d{2} (AM|PM) –/ }).first().click();
     await page.getByRole('button', { name: /Next: Details/ }).click();
@@ -159,6 +112,9 @@ test('UAE customer books Pest Control with cash + coupon, then pays by card', as
     await typeDialog.getByRole('button', { name: 'Add', exact: true }).first().click();
     await typeDialog.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('button', { name: 'Continue →' }).click();
+
+    // Photos are mandatory: Continue opens "Add Information" asking for a gallery photo.
+    await addPestPhoto(page);
   });
 
   await test.step('Choose Pro: fixed price, let UtilStop choose', async () => {

@@ -4,6 +4,14 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
+
+# Both workflows log in to the same UtilStop test account, and the site rate-limits OTP
+# requests per phone number: never run them at the same time (shared group, queued).
+concurrency:
+  group: utilstop-test-account
+  cancel-in-progress: false
+
 jobs:
   test:
     timeout-minutes: 60
@@ -13,6 +21,7 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: lts/*
+        cache: npm
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
@@ -37,7 +46,12 @@ jobs:
     # Chromium only, no retries: every UtilStop test logs in with the same phone number,
     # and the site rate-limits OTP requests per number (shared with the 2-hourly workflow).
     - name: Run Playwright tests
-      run: npx playwright test --project=chromium --retries=0
+      env:
+        HEADLESS: '1'
+        PLAYWRIGHT_HTML_OPEN: never
+      # Only the spec that cancels its own booking: book.spec.ts and pest-control-booking.spec.ts
+      # leave real bookings (and a card payment) on the dev account, so run those by hand.
+      run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=0 --reporter=line,html
     - name: Save login session for the next run
       if: ${{ !cancelled() && hashFiles('playwright/.auth/*.json') != '' }}
       uses: actions/cache/save@v4
