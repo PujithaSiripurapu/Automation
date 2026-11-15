@@ -3,11 +3,13 @@ import { addPestPhoto, openLoggedIn, pickDateDaysAhead, test } from './support/u
 
 /**
  * End-to-end: UAE customer logs in (phone + OTP), books Pest Control for a future date,
- * then opens My Bookings and cancels that same booking.
+ * pays by Cash or by card, then opens My Bookings and cancels that same booking.
  *
  * Runs on GitHub Actions (playwright.yml): every 2 hours, on every push, and on "Run workflow".
+ * The payment mode alternates every 2 hours (see paymentMode below).
  *
- * Env overrides: TEST_PHONE, TEST_OTP, TEST_PEST_TYPE, TEST_DAYS_AHEAD.
+ * Env overrides: TEST_PAYMENT_MODE (cash | card), TEST_PHONE, TEST_OTP, TEST_PEST_TYPE,
+ * TEST_DAYS_AHEAD, TEST_CARD_NUMBER, TEST_CARD_EXPIRY, TEST_CARD_CVC, TEST_CARD_COUNTRY.
  */
 
 // dev.utilstop.com is a Vite dev server; lazy pages can take well over 5s to render.
@@ -19,6 +21,25 @@ test.use({ headless: process.env.HEADLESS === '1' || !!process.env.CI });
 const pestType = process.env.TEST_PEST_TYPE ?? 'Cockroaches';
 // Cancel Booking is only offered when the service is more than 24h away, so keep this >= 2.
 const daysAhead = Number(process.env.TEST_DAYS_AHEAD ?? 7);
+
+// Cash and card take turns: each 2-hour block of the day (UTC) uses the opposite mode to the
+// one before it, so the 2-hourly GitHub runs go cash, card, cash, card, ...
+// TEST_PAYMENT_MODE=cash|card forces one (the workflow sets it from its "Run workflow" choice).
+type PaymentMode = 'cash' | 'card';
+const paymentMode: PaymentMode = (() => {
+  const forced = process.env.TEST_PAYMENT_MODE?.trim().toLowerCase();
+  if (forced === 'cash' || forced === 'card') return forced;
+  if (forced && forced !== 'auto') throw new Error(`TEST_PAYMENT_MODE must be cash, card or auto, not "${forced}"`);
+  return Math.floor(Date.now() / (2 * 60 * 60 * 1000)) % 2 === 0 ? 'cash' : 'card';
+})();
+
+// Stripe test-mode Visa (dev.utilstop.com uses Stripe test keys).
+const card = {
+  number: process.env.TEST_CARD_NUMBER ?? '4242424242424242',
+  expiry: process.env.TEST_CARD_EXPIRY ?? '12/34',
+  cvc: process.env.TEST_CARD_CVC ?? '123',
+  country: process.env.TEST_CARD_COUNTRY ?? 'United Arab Emirates',
+};
 
 // The dev API rate-limits endpoints (e.g. /api/services_web: 30 requests / 15 min).
 // Track 429s so a failure caused by the server's rate limit is reported as such.
@@ -44,12 +65,39 @@ test.afterEach(async ({}, testInfo) => {
   }
 });
 
+// After "Pay <amount>" in Pay Now mode: fill the Stripe card form and confirm.
+async function payByCard(page: Page) {
+  // Stripe renders several iframes; use the one holding the card fields.
+  const stripeFrames = page.locator('iframe[title="Secure payment input frame"]');
+  let stripe = stripeFrames.first().contentFrame();
+  await expect(async () => {
+    for (let i = 0; i < await stripeFrames.count(); i++) {
+      const frame = stripeFrames.nth(i).contentFrame();
+      if (await frame.getByRole('textbox', { name: 'Card number' }).count()) {
+        stripe = frame;
+        return;
+      }
+    }
+    throw new Error('Stripe card form not loaded yet');
+  }, 'Stripe card form did not appear after Pay').toPass({ timeout: 60_000 });
+
+  await stripe.getByRole('textbox', { name: 'Card number' }).fill(card.number);
+  await stripe.getByRole('textbox', { name: 'Expiration date' }).fill(card.expiry);
+  await stripe.getByRole('textbox', { name: 'Security code' }).fill(card.cvc);
+  const country = stripe.getByRole('combobox', { name: 'Country', exact: true });
+  if (await country.count()) await country.selectOption({ label: card.country });
+
+  await page.getByRole('button', { name: 'Confirm Payment' }).click();
+}
+
 function bookingCard(page: Page, displayBookingId: string) {
   return page.getByRole('link', { name: new RegExp(`Booking ID: .*${displayBookingId}\\b`) });
 }
 
 test('UAE customer books Pest Control for a future date, then cancels it from My Bookings', async ({ page }) => {
   test.setTimeout(300_000);
+  test.info().annotations.push({ type: 'payment', description: paymentMode });
+  console.log(`Payment mode: ${paymentMode}`);
   expect(daysAhead, 'TEST_DAYS_AHEAD must be >= 2 so the booking can be cancelled').toBeGreaterThanOrEqual(2);
 
   await test.step('Login with UAE phone number and OTP', async () => {
@@ -126,19 +174,25 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
     await page.getByRole('button', { name: /Proceed to payment/ }).click();
   });
 
-  await test.step('Payment: Cash', async () => {
+  await test.step(`Payment: ${paymentMode === 'cash' ? 'Cash' : 'Pay Now by card'}`, async () => {
     await expect(
       page.getByRole('heading', { name: 'Complete Payment' }),
       'Payment summary did not load (dev API /getPaymentByCartID may be failing)',
     ).toBeVisible();
-    await page.getByRole('button', { name: 'Cash', exact: true }).click();
-    await expect(page.getByText('Cash Handling Fee')).toBeVisible();
+    if (paymentMode === 'cash') {
+      await page.getByRole('button', { name: 'Cash', exact: true }).click();
+      await expect(page.getByText('Cash Handling Fee')).toBeVisible();
+    } else {
+      await page.getByRole('button', { name: 'Pay Now', exact: true }).click();
+      await expect(page.getByText('Cash Handling Fee')).toBeHidden();
+    }
   });
 
   let displayBookingId = '';
   await test.step('Complete booking', async () => {
     // Desktop pay button reads "Pay AED <total>"; the "Pay Now" option button has no amount.
     await page.getByRole('button', { name: /^Pay\b.*\d/ }).click();
+    if (paymentMode === 'card') await payByCard(page);
 
     await expect(page).toHaveURL(/\/booking\/[^/]+\/success/, { timeout: 90_000 });
     await expect(page.getByRole('heading', { name: 'Booking Confirmed' })).toBeVisible();

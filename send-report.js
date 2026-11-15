@@ -5,6 +5,8 @@ const { ZipArchive } = require('archiver');
 
 // TEST_STATUS is the test step outcome from the workflow: success | failure.
 const status = { success: 'PASSED', failure: 'FAILED' }[process.env.TEST_STATUS] ?? process.env.TEST_STATUS;
+// PAYMENT_MODE is the mode this run booked with: cash | card.
+const payment = { cash: 'Cash', card: 'Card' }[process.env.PAYMENT_MODE] ?? process.env.PAYMENT_MODE;
 
 const REQUIRED_ENV = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'REPORT_TO'];
 
@@ -61,10 +63,11 @@ async function sendReport() {
     await transporter.sendMail({
         from: process.env.SMTP_USER,
         to: process.env.REPORT_TO,
-        subject: `Pest Control Automation Report${status ? ` - ${status}` : ''}`,
+        subject: `Pest Control Automation Report${payment ? ` (${payment})` : ''}${status ? ` - ${status}` : ''}`,
         text: [
             'Hello Team, please find the latest Playwright execution report attached.',
             status && `Result: ${status}`,
+            payment && `Payment mode: ${payment}`,
             process.env.RUN_URL && `Run details: ${process.env.RUN_URL}`,
         ].filter(Boolean).join('\n\n'),
         attachments: [{

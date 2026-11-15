@@ -1,6 +1,7 @@
 name: Playwright Tests
 
 # Books Pest Control on dev.utilstop.com, cancels it, and emails the report.
+# Payment alternates every 2 hours: Cash, then card (Pay Now), then Cash, ...
 on:
   schedule:
     # Every 2 hours, on the hour (UTC). GitHub may start scheduled runs a few minutes late.
@@ -10,6 +11,12 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch: # "Run workflow" button for manual runs
+    inputs:
+      payment_mode:
+        description: 'Payment mode (auto = alternate every 2 hours)'
+        type: choice
+        options: [auto, cash, card]
+        default: auto
 
 # Every run logs in to the same UtilStop test account, and the site rate-limits OTP
 # requests per phone number: never run two at the same time (queued, not cancelled).
@@ -55,11 +62,25 @@ jobs:
         fi
         if [ -f "$f" ]; then echo "Login session available"; else echo "No saved session: test will request an OTP"; fi
 
+    # Same rule as the test: each 2-hour block (UTC) uses the opposite mode to the one before.
+    - name: Pick payment mode
+      id: mode
+      env:
+        CHOSEN: ${{ inputs.payment_mode }}
+      run: |
+        mode="$CHOSEN"
+        if [ -z "$mode" ] || [ "$mode" = auto ]; then
+          if [ $(( $(date -u +%s) / 7200 % 2 )) -eq 0 ]; then mode=cash; else mode=card; fi
+        fi
+        echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        echo "Payment mode for this run: $mode"
+
     # The booking test cancels its own booking, so it leaves nothing behind on the dev account.
-    - name: Book Pest Control, then cancel it
+    - name: Book Pest Control (${{ steps.mode.outputs.mode }}), then cancel it
       id: test
       env:
         HEADLESS: '1'
+        TEST_PAYMENT_MODE: ${{ steps.mode.outputs.mode }}
         PLAYWRIGHT_HTML_OPEN: never
       # One retry for a flaky dev server; the retry reuses the session saved by the first attempt.
       run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=1 --reporter=line,html
@@ -81,6 +102,7 @@ jobs:
         SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         REPORT_TO: ${{ secrets.REPORT_TO }}
         TEST_STATUS: ${{ steps.test.outcome }}
+        PAYMENT_MODE: ${{ steps.mode.outputs.mode }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node send-report.js
 
