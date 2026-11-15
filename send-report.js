@@ -8,6 +8,11 @@ const status = { success: 'PASSED', failure: 'FAILED' }[process.env.TEST_STATUS]
 
 const REQUIRED_ENV = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'REPORT_TO'];
 
+// Secrets pasted into GitHub often pick up stray spaces, newlines or quotes around the value.
+for (const name of REQUIRED_ENV) {
+    if (process.env[name]) process.env[name] = process.env[name].trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+}
+
 async function zipReport(sourceDir, zipPath) {
     const output = fs.createWriteStream(zipPath);
     const archive = new ZipArchive({ zlib: { level: 9 } });
@@ -74,5 +79,13 @@ async function sendReport() {
 
 sendReport().catch(error => {
     console.error('Email failed:', error.message ?? error);
+    const hint = {
+        ENOTFOUND: 'SMTP_HOST is not a mail server name. Use just the host, e.g. smtp.gmail.com, smtp.mail.yahoo.com or smtp.office365.com (no email address, https:// or port).',
+        EAUTH: 'SMTP_USER / SMTP_PASSWORD were rejected. Use the full email address and an app password, not your normal password.',
+        ETIMEDOUT: 'Could not reach the mail server. Check SMTP_PORT: 587 for Gmail/Outlook, 465 for Yahoo.',
+        ECONNREFUSED: 'The mail server refused the connection. Check SMTP_HOST and SMTP_PORT (587 or 465).',
+        ESOCKET: 'TLS problem talking to the mail server. Check SMTP_PORT: 587 for Gmail/Outlook, 465 for Yahoo.',
+    }[/ENOTFOUND/.test(error.message) ? 'ENOTFOUND' : error.code];
+    if (hint) console.error(`::error::${hint}`);
     process.exitCode = 1;
 });
