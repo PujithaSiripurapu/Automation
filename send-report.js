@@ -27,6 +27,12 @@ async function zipReport(sourceDir, zipPath) {
 
 async function sendReport() {
     const missing = REQUIRED_ENV.filter((name) => !process.env[name]);
+    // No email settings at all: email isn't set up yet, so skip with a warning instead of
+    // failing a run whose test passed. Only some missing: a typo, so still fail.
+    if (missing.length === REQUIRED_ENV.length) {
+        console.log(`::warning::Report email skipped: add ${REQUIRED_ENV.join(', ')} as GitHub Actions repository secrets to get it.`);
+        return false;
+    }
     if (missing.length) {
         throw new Error(`Missing email settings: ${missing.join(', ')} (add them as GitHub Actions secrets)`);
     }
@@ -63,6 +69,7 @@ async function sendReport() {
     });
 
     console.log('Email report sent successfully!');
+    return true;
 }
 
 sendReport().catch(error => {
