@@ -5,7 +5,7 @@ import { addPestPhoto, openLoggedIn, pickDateDaysAhead, test } from './support/u
  * End-to-end: UAE customer logs in (phone + OTP), books Pest Control for a future date,
  * then opens My Bookings and cancels that same booking.
  *
- * Runs every 5 minutes via Windows Task Scheduler (see scripts/run-pest-book-cancel.cmd).
+ * Runs on GitHub Actions: on every push (playwright.yml) and every 2 hours (pest-book-cancel.yml).
  *
  * Env overrides: TEST_PHONE, TEST_OTP, TEST_PEST_TYPE, TEST_DAYS_AHEAD.
  */

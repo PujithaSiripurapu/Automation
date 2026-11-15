@@ -4,12 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test:booking": "playwright test tests/book.spec.ts --project=chromium",
-    "test:pest": "playwright test tests/pest-control-booking.spec.ts --project=chromium",
     "typecheck": "tsc --noEmit",
-    "test:pest-cancel": "playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium",
-    "schedule:pest-cancel": "powershell -ExecutionPolicy Bypass -File scripts/schedule-pest-book-cancel.ps1",
-    "unschedule:pest-cancel": "powershell -ExecutionPolicy Bypass -File scripts/schedule-pest-book-cancel.ps1 -Remove"
+    "test:pest-cancel": "playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium"
   },
   "keywords": [],
   "author": "",

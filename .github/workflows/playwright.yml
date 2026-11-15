@@ -49,8 +49,7 @@ jobs:
       env:
         HEADLESS: '1'
         PLAYWRIGHT_HTML_OPEN: never
-      # Only the spec that cancels its own booking: book.spec.ts and pest-control-booking.spec.ts
-      # leave real bookings (and a card payment) on the dev account, so run those by hand.
+      # The booking test cancels its own booking, so it leaves nothing behind on the dev account.
       run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=0 --reporter=line,html
     - name: Save login session for the next run
       if: ${{ !cancelled() && hashFiles('playwright/.auth/*.json') != '' }}
