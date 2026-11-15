@@ -23,6 +23,20 @@ export const test = base.extend({
   timezoneId: 'Asia/Dubai',
 });
 
+/**
+ * Screenshot of the current screen, attached to the test under `title`. The PDF report
+ * (reporters/pdf-report.js) shows these in order as the record of the run.
+ * Never fails the test: a missed screenshot is only logged.
+ */
+export async function snap(page: Page, title: string) {
+  try {
+    const body = await page.screenshot({ type: 'jpeg', quality: 70 });
+    await base.info().attach(title, { body, contentType: 'image/jpeg' });
+  } catch (error) {
+    console.warn(`Screenshot "${title}" skipped: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
 // Longest Retry-After we are willing to wait out when /api/generateOTP is rate-limited.
 const maxOtpWaitSeconds = Number(process.env.TEST_MAX_OTP_WAIT ?? 600);
 

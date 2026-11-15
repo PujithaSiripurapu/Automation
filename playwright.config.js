@@ -22,8 +22,13 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 1 : undefined,
-  /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: 'html',
+  /* Reporters: console output, the HTML report, and a PDF report (test-report/report.pdf)
+     with the result, booking ID, steps, errors and screenshots. See reporters/pdf-report.js */
+  reporter: [
+    [process.env.CI ? 'line' : 'list'],
+    ['html', { open: process.env.CI ? 'never' : 'on-failure' }],
+    ['./reporters/pdf-report.js'],
+  ],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */
@@ -31,6 +36,8 @@ export default defineConfig({
 
     /* Keep the trace of every failed test (CI runs with few or no retries). See https://playwright.dev/docs/trace-viewer */
     trace: 'retain-on-failure',
+    /* Screenshot of the screen at the moment a test fails (shown in the PDF report). */
+    screenshot: 'only-on-failure',
   },
 
   /* Configure projects for major browsers */

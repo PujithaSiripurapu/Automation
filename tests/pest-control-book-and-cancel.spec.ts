@@ -1,5 +1,5 @@
 import { expect as baseExpect, type Page } from '@playwright/test';
-import { addPestPhoto, openLoggedIn, pickDateDaysAhead, test } from './support/utilstop';
+import { addPestPhoto, openLoggedIn, pickDateDaysAhead, snap, test } from './support/utilstop';
 
 /**
  * End-to-end: UAE customer logs in (phone + OTP), books Pest Control for a future date,
@@ -70,7 +70,14 @@ async function payByCard(page: Page) {
   // Stripe renders several iframes; use the one holding the card fields.
   const stripeFrames = page.locator('iframe[title="Secure payment input frame"]');
   let stripe = stripeFrames.first().contentFrame();
+  // When the dev payment API fails, the page shows this instead of the card form.
+  const siteError = page.getByText(/Something went wrong/i);
+  let siteErrorText = '';
   await expect(async () => {
+    if (await siteError.isVisible()) {
+      siteErrorText = (await siteError.first().innerText()).trim();
+      return;
+    }
     for (let i = 0; i < await stripeFrames.count(); i++) {
       const frame = stripeFrames.nth(i).contentFrame();
       if (await frame.getByRole('textbox', { name: 'Card number' }).count()) {
@@ -80,12 +87,19 @@ async function payByCard(page: Page) {
     }
     throw new Error('Stripe card form not loaded yet');
   }, 'Stripe card form did not appear after Pay').toPass({ timeout: 60_000 });
+  if (siteErrorText) {
+    throw new Error(
+      `UtilStop could not start the card payment. After clicking Pay the site showed: "${siteErrorText}". ` +
+      'This is a dev site / payment API problem, not a test problem.',
+    );
+  }
 
   await stripe.getByRole('textbox', { name: 'Card number' }).fill(card.number);
   await stripe.getByRole('textbox', { name: 'Expiration date' }).fill(card.expiry);
   await stripe.getByRole('textbox', { name: 'Security code' }).fill(card.cvc);
   const country = stripe.getByRole('combobox', { name: 'Country', exact: true });
   if (await country.count()) await country.selectOption({ label: card.country });
+  await snap(page, 'Card details entered (Stripe test card)');
 
   await page.getByRole('button', { name: 'Confirm Payment' }).click();
 }
@@ -130,6 +144,7 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
     await pickDateDaysAhead(page, daysAhead);
 
     await page.getByRole('button', { name: /^\d{1,2}:\d{2} (AM|PM) –/ }).first().click();
+    await snap(page, 'Location: address, date and time slot selected');
     await page.getByRole('button', { name: /Next: Details/ }).click();
   });
 
@@ -155,6 +170,7 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
     const typeDialog = page.getByRole('heading', { name: 'Select Type' }).locator('xpath=../..');
     await typeDialog.getByRole('button', { name: 'Add', exact: true }).first().click();
     await typeDialog.getByRole('button', { name: 'Continue' }).click();
+    await snap(page, `Items: ${pestType} added, photo requested`);
     await page.getByRole('button', { name: 'Continue →' }).click();
 
     // Photos are mandatory: Continue opens "Add Information" asking for a gallery photo.
@@ -165,12 +181,14 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
     await expect(page.getByRole('heading', { name: 'Choose your Pro' })).toBeVisible();
     await expect(page.getByRole('radio', { name: 'Fixed Price' })).toBeChecked();
     await page.getByRole('button', { name: /Let UtilStop choose for you/ }).click();
+    await snap(page, 'Choose your Pro: Fixed Price, UtilStop chooses');
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
   });
 
   await test.step('Review booking', async () => {
     await expect(page.getByRole('heading', { name: 'Review your booking' })).toBeVisible();
     await expect(page.getByText(new RegExp(`${pestType} - `))).toBeVisible();
+    await snap(page, 'Review your booking');
     await page.getByRole('button', { name: /Proceed to payment/ }).click();
   });
 
@@ -186,6 +204,7 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
       await page.getByRole('button', { name: 'Pay Now', exact: true }).click();
       await expect(page.getByText('Cash Handling Fee')).toBeHidden();
     }
+    await snap(page, `Payment: ${paymentMode === 'cash' ? 'Cash' : 'Pay Now (card)'} selected`);
   });
 
   let displayBookingId = '';
@@ -204,6 +223,7 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
     displayBookingId = (await idLine.textContent())!.replace('Booking ID:', '').trim();
     test.info().annotations.push({ type: 'booking', description: displayBookingId });
     console.log(`Booked ${displayBookingId}`);
+    await snap(page, `Booking Confirmed: ${displayBookingId}`);
   });
 
   await test.step(`My Bookings: open ${displayBookingId}`, async () => {
@@ -217,6 +237,7 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
     await page.getByRole('link', { name: 'View Booking Details' }).click();
     await expect(page).toHaveURL(/\/booking\/[^/]+\/details/);
     await expect(page.getByText(`Booking ID: ${displayBookingId}`)).toBeVisible();
+    await snap(page, `Booking Details: ${displayBookingId}`);
   });
 
   await test.step(`Cancel booking ${displayBookingId}`, async () => {
@@ -227,11 +248,14 @@ test('UAE customer books Pest Control for a future date, then cancels it from My
 
     const confirmDialog = page.getByRole('heading', { name: 'Cancel booking', exact: true }).locator('xpath=..');
     await expect(confirmDialog.getByText('Are you sure want to cancel the booking?')).toBeVisible();
+    await snap(page, `Cancel ${displayBookingId}: confirmation`);
     await confirmDialog.getByRole('button', { name: 'Yes', exact: true }).click();
 
     // On success the app returns to My Bookings.
     await expect(page).toHaveURL(/\/account\/bookings/);
     await expect(bookingCard(page, displayBookingId)).toContainText('Cancelled', { timeout: 60_000 });
+    await bookingCard(page, displayBookingId).scrollIntoViewIfNeeded();
+    await snap(page, `My Bookings: ${displayBookingId} Cancelled`);
     console.log(`Cancelled ${displayBookingId}`);
   });
 });

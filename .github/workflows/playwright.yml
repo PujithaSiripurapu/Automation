@@ -83,7 +83,8 @@ jobs:
         TEST_PAYMENT_MODE: ${{ steps.mode.outputs.mode }}
         PLAYWRIGHT_HTML_OPEN: never
       # One retry for a flaky dev server; the retry reuses the session saved by the first attempt.
-      run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=1 --reporter=line,html
+      # Reporters come from playwright.config.js: console log, HTML report and the PDF report.
+      run: npx playwright test tests/pest-control-book-and-cancel.spec.ts --project=chromium --retries=1
 
     # Saved even when the test fails, so a successful OTP login is never thrown away.
     - name: Save login session for the next run
@@ -110,5 +111,7 @@ jobs:
       if: ${{ !cancelled() }}
       with:
         name: playwright-report
-        path: playwright-report/
+        path: |
+          playwright-report/
+          test-report/
         retention-days: 30

@@ -8,6 +8,9 @@ const status = { success: 'PASSED', failure: 'FAILED' }[process.env.TEST_STATUS]
 // PAYMENT_MODE is the mode this run booked with: cash | card.
 const payment = { cash: 'Cash', card: 'Card' }[process.env.PAYMENT_MODE] ?? process.env.PAYMENT_MODE;
 
+const PDF_PATH = 'test-report/report.pdf';
+const SUMMARY_PATH = 'test-report/summary.json';
+
 const REQUIRED_ENV = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'REPORT_TO'];
 
 // Secrets pasted into GitHub often pick up stray spaces, newlines or quotes around the value.
@@ -60,20 +63,47 @@ async function sendReport() {
         }
     });
 
+    // Written by reporters/pdf-report.js next to the PDF; missing if the run crashed early.
+    const summary = fs.existsSync(SUMMARY_PATH) ? JSON.parse(fs.readFileSync(SUMMARY_PATH, 'utf8')) : {};
+    const result = summary.status ?? status;
+    const mode = { cash: 'Cash', card: 'Card' }[summary.paymentMode] ?? payment;
+    const bookingId = summary.bookingId || '';
+    const firstErrorLines = (summary.error || '').split('\n').filter(Boolean).slice(0, 6).join('\n');
+
+    const attachments = [];
+    if (fs.existsSync(PDF_PATH)) {
+        const date = (summary.started ? new Date(summary.started) : new Date()).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
+        attachments.push({
+            filename: ['PestControl', result, mode, bookingId || 'no-booking', date].filter(Boolean).join('_') + '.pdf',
+            path: PDF_PATH,
+        });
+    }
+    attachments.push({ filename: 'Full-HTML-Report.zip', path: 'report.zip' });
+
     await transporter.sendMail({
         from: process.env.SMTP_USER,
         to: process.env.REPORT_TO,
-        subject: `Pest Control Automation Report${payment ? ` (${payment})` : ''}${status ? ` - ${status}` : ''}`,
+        subject: [
+            `Pest Control Automation Report${mode ? ` (${mode})` : ''}`,
+            result,
+            bookingId,
+        ].filter(Boolean).join(' - '),
         text: [
-            'Hello Team, please find the latest Playwright execution report attached.',
-            status && `Result: ${status}`,
-            payment && `Payment mode: ${payment}`,
+            'Hello Team, please find the latest Pest Control automation report attached (PDF with steps, errors and screenshots).',
+            [
+                result && `Result:          ${result}${summary.passedOnRetry ? ' (on retry)' : ''}`,
+                `Booking ID:      ${bookingId || 'Not created'}`,
+                mode && `Payment mode:    ${mode}`,
+                summary.startedDubai && `Started:         ${summary.startedDubai} (Dubai) / ${summary.startedIndia} (India)`,
+                summary.duration && `Total time:      ${Math.round(summary.duration / 1000)}s`,
+            ].filter(Boolean).join('\n'),
+            result === 'FAILED' && [
+                summary.failedStep && `Failed at step:  ${summary.failedStep}`,
+                firstErrorLines && `Error:\n${firstErrorLines}`,
+            ].filter(Boolean).join('\n'),
             process.env.RUN_URL && `Run details: ${process.env.RUN_URL}`,
         ].filter(Boolean).join('\n\n'),
-        attachments: [{
-            filename: 'QA-Report.zip',
-            path: 'report.zip'
-        }]
+        attachments,
     });
 
     console.log('Email report sent successfully!');
